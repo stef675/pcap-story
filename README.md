@@ -16,6 +16,9 @@ The application currently displays:
 - Top destination IP addresses
 - Most frequently used destination ports
 
+- Possible port-scanning patterns based on unique destination ports
+- A privacy-safe demo using synthetic documentation addresses
+
 ## Privacy by Design
 
 - Capture files are processed locally on the user's computer.
@@ -59,6 +62,9 @@ Run the analyzer:
 dotnet run --project .\PcapStory.Analyzer\PcapStory.Analyzer.csproj
 ```
 
+To run the privacy-safe demonstration, select option `2`. This mode uses synthetic TEST-NET addresses and does not read a personal capture file.
+
+To analyze an authorized capture, select option `1`.
 When prompted, enter the full path of an authorized PCAP or PCAPNG file:
 
 ```text
@@ -91,7 +97,7 @@ The program:
 Planned improvements include:
 
 - Exporting analysis results to JSON
-- Detecting possible port-scanning patterns
+
 - Adding IPv6 analysis
 - Creating an ASP.NET Core API
 - Building a React dashboard

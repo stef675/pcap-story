@@ -10,9 +10,31 @@ Console.WriteLine("================================");
 Console.WriteLine("         PCAP STORY");
 Console.WriteLine("================================");
 Console.WriteLine();
+Console.WriteLine("[1] Analyze an authorized PCAP file");
+Console.WriteLine("[2] Run privacy-safe demo");
+Console.WriteLine();
+
+Console.Write("Choose an option: ");
+string? option = Console.ReadLine()?.Trim();
+
+if (option == "2")
+{
+    List<PacketInfo> demoPackets = CreateDemoPackets();
+
+    AnalyzePackets(
+        demoPackets,
+        "Privacy-safe synthetic demonstration");
+
+    return;
+}
+
+if (option != "1")
+{
+    Console.WriteLine("Error: Invalid option.");
+    return;
+}
 
 Console.Write("Enter the path of a PCAP file: ");
-
 string? filePath = Console.ReadLine();
 
 if (string.IsNullOrWhiteSpace(filePath))
@@ -33,134 +55,311 @@ string extension = Path.GetExtension(filePath).ToLowerInvariant();
 
 if (extension != ".pcap" && extension != ".pcapng")
 {
-    Console.WriteLine("Error: Only PCAP and PCAPNG files are supported.");
+    Console.WriteLine(
+        "Error: Only PCAP and PCAPNG files are supported.");
+
     return;
 }
 
 if (!File.Exists(tsharkPath))
 {
-    Console.WriteLine("Error: Tshark was not found.");
+    Console.WriteLine("Error: TShark was not found.");
     return;
 }
 
-var startInfo = new ProcessStartInfo
+List<PacketInfo>? capturedPackets =
+    await ReadPacketsAsync(tsharkPath, filePath);
+
+if (capturedPackets is null)
 {
-    FileName = tsharkPath,
-    RedirectStandardOutput = true,
-    RedirectStandardError = true,
-    UseShellExecute = false,
-    CreateNoWindow = true
-};
+    return;
+}
 
-startInfo.ArgumentList.Add("-r");
-startInfo.ArgumentList.Add(filePath);
+AnalyzePackets(
+    capturedPackets,
+    Path.GetFileName(filePath));
 
-startInfo.ArgumentList.Add("-T");
-startInfo.ArgumentList.Add("fields");
-
-startInfo.ArgumentList.Add("-e");
-startInfo.ArgumentList.Add("frame.number");
-
-startInfo.ArgumentList.Add("-e");
-startInfo.ArgumentList.Add("ip.src");
-
-startInfo.ArgumentList.Add("-e");
-startInfo.ArgumentList.Add("ip.dst");
-
-startInfo.ArgumentList.Add("-e");
-startInfo.ArgumentList.Add("_ws.col.Protocol");
-
-startInfo.ArgumentList.Add("-e");
-startInfo.ArgumentList.Add("tcp.dstport");
-
-startInfo.ArgumentList.Add("-e");
-startInfo.ArgumentList.Add("udp.dstport");
-
-Console.WriteLine();
-Console.WriteLine("Analyzing capture...");
-
-try
+static async Task<List<PacketInfo>?> ReadPacketsAsync(
+    string tsharkPath,
+    string filePath)
 {
-    using Process? process = Process.Start(startInfo);
-
-    if (process is null)
+    var startInfo = new ProcessStartInfo
     {
-        Console.WriteLine("Error: Tshark could not be started.");
-        return;
-    }
+        FileName = tsharkPath,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+    };
 
-    Task<string> outputTask =
-        process.StandardOutput.ReadToEndAsync();
+    startInfo.ArgumentList.Add("-r");
+    startInfo.ArgumentList.Add(filePath);
 
-    Task<string> errorTask =
-        process.StandardError.ReadToEndAsync();
+    startInfo.ArgumentList.Add("-T");
+    startInfo.ArgumentList.Add("fields");
 
-    await process.WaitForExitAsync();
+    startInfo.ArgumentList.Add("-e");
+    startInfo.ArgumentList.Add("frame.number");
 
-    string output = await outputTask;
-    string error = await errorTask;
+    startInfo.ArgumentList.Add("-e");
+    startInfo.ArgumentList.Add("ip.src");
 
-    if (process.ExitCode != 0)
+    startInfo.ArgumentList.Add("-e");
+    startInfo.ArgumentList.Add("ip.dst");
+
+    startInfo.ArgumentList.Add("-e");
+    startInfo.ArgumentList.Add("_ws.col.Protocol");
+
+    startInfo.ArgumentList.Add("-e");
+    startInfo.ArgumentList.Add("tcp.dstport");
+
+    startInfo.ArgumentList.Add("-e");
+    startInfo.ArgumentList.Add("udp.dstport");
+
+    Console.WriteLine();
+    Console.WriteLine("Analyzing capture...");
+
+    try
     {
-        Console.WriteLine("Tshark analysis failed.");
-        Console.WriteLine(error);
-        return;
-    }
+        using Process? process = Process.Start(startInfo);
 
+        if (process is null)
+        {
+            Console.WriteLine(
+                "Error: TShark could not be started.");
+
+            return null;
+        }
+
+        Task<string> outputTask =
+            process.StandardOutput.ReadToEndAsync();
+
+        Task<string> errorTask =
+            process.StandardError.ReadToEndAsync();
+
+        await process.WaitForExitAsync();
+
+        string output = await outputTask;
+        string error = await errorTask;
+
+        if (process.ExitCode != 0)
+        {
+            Console.WriteLine("TShark analysis failed.");
+            Console.WriteLine(error);
+
+            return null;
+        }
+
+        var packets = new List<PacketInfo>();
+
+        string[] lines = output.Split(
+            new[] { "\r\n", "\n" },
+            StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (string line in lines)
+        {
+            string[] fields = line.Split('\t');
+
+            string sourceIp =
+                FirstValue(GetField(fields, 1));
+
+            string destinationIp =
+                FirstValue(GetField(fields, 2));
+
+            string protocol =
+                FirstValue(GetField(fields, 3));
+
+            string tcpPort =
+                FirstValue(GetField(fields, 4));
+
+            string udpPort =
+                FirstValue(GetField(fields, 5));
+
+            string transport = string.Empty;
+            string destinationPort = string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(tcpPort))
+            {
+                transport = "TCP";
+                destinationPort = tcpPort;
+            }
+            else if (!string.IsNullOrWhiteSpace(udpPort))
+            {
+                transport = "UDP";
+                destinationPort = udpPort;
+            }
+
+            packets.Add(
+                new PacketInfo(
+                    sourceIp,
+                    destinationIp,
+                    protocol,
+                    transport,
+                    destinationPort));
+        }
+
+        return packets;
+    }
+    catch (Exception exception)
+    {
+        Console.WriteLine();
+        Console.WriteLine("Unexpected error:");
+        Console.WriteLine(exception.Message);
+
+        return null;
+    }
+}
+
+static void AnalyzePackets(
+    IReadOnlyCollection<PacketInfo> packets,
+    string sourceName)
+{
     var protocolCounts = new Dictionary<string, int>();
     var sourceIpCounts = new Dictionary<string, int>();
     var destinationIpCounts = new Dictionary<string, int>();
-    var destinationPortCounts = new Dictionary<string, int>();
+    var destinationPortCounts =
+        new Dictionary<string, int>();
 
-    string[] packets = output.Split(
-        new[] { "\r\n", "\n" },
-        StringSplitOptions.RemoveEmptyEntries);
-
-    foreach (string packet in packets)
+    foreach (PacketInfo packet in packets)
     {
-        string[] fields = packet.Split('\t');
+        AddCount(protocolCounts, packet.Protocol);
+        AddCount(sourceIpCounts, packet.SourceIp);
+        AddCount(
+            destinationIpCounts,
+            packet.DestinationIp);
 
-        string sourceIp = GetField(fields, 1);
-        string destinationIp = GetField(fields, 2);
-        string protocol = GetField(fields, 3);
-        string tcpPort = GetField(fields, 4);
-        string udpPort = GetField(fields, 5);
+        if (!string.IsNullOrWhiteSpace(
+                packet.DestinationPort))
+        {
+            string portName =
+                $"{packet.Transport}/{packet.DestinationPort}";
 
-        AddCount(sourceIpCounts, sourceIp);
-        AddCount(destinationIpCounts, destinationIp);
-        AddCount(protocolCounts, protocol);
-
-        string destinationPort =
-            !string.IsNullOrWhiteSpace(tcpPort)
-                ? $"TCP/{tcpPort}"
-                : !string.IsNullOrWhiteSpace(udpPort)
-                    ? $"UDP/{udpPort}"
-                    : string.Empty;
-
-        AddCount(destinationPortCounts, destinationPort);
+            AddCount(destinationPortCounts, portName);
+        }
     }
 
     Console.WriteLine();
-    Console.WriteLine("========== ANALYSIS RESULT ==========");
-    Console.WriteLine($"File: {Path.GetFileName(filePath)}");
-    Console.WriteLine($"Total packets: {packets.Length}");
+    Console.WriteLine(
+        "========== ANALYSIS RESULT ==========");
+
+    Console.WriteLine($"Source: {sourceName}");
+    Console.WriteLine($"Total packets: {packets.Count}");
 
     PrintTop("Top protocols", protocolCounts);
     PrintTop("Top source IP addresses", sourceIpCounts);
-    PrintTop("Top destination IP addresses", destinationIpCounts);
-    PrintTop("Top destination ports", destinationPortCounts);
+
+    PrintTop(
+        "Top destination IP addresses",
+        destinationIpCounts);
+
+    PrintTop(
+        "Top destination ports",
+        destinationPortCounts);
+
+    PrintSecurityFindings(packets);
 
     Console.WriteLine();
-    Console.WriteLine("Analysis completed successfully.");
+    Console.WriteLine(
+        "Analysis completed successfully.");
 }
-catch (Exception exception)
+
+static void PrintSecurityFindings(
+    IReadOnlyCollection<PacketInfo> packets)
 {
+    const int portScanThreshold = 10;
+
+    var possiblePortScans = packets
+        .Where(packet =>
+            !string.IsNullOrWhiteSpace(packet.SourceIp) &&
+            !string.IsNullOrWhiteSpace(
+                packet.DestinationIp) &&
+            !string.IsNullOrWhiteSpace(
+                packet.DestinationPort))
+        .GroupBy(packet => new
+        {
+            packet.SourceIp,
+            packet.DestinationIp
+        })
+        .Select(group => new
+        {
+            group.Key.SourceIp,
+            group.Key.DestinationIp,
+
+            Ports = group
+                .Select(packet =>
+                    packet.DestinationPort)
+                .Distinct()
+                .ToList()
+        })
+        .Where(result =>
+            result.Ports.Count >= portScanThreshold)
+        .ToList();
+
     Console.WriteLine();
-    Console.WriteLine("Unexpected error:");
-    Console.WriteLine(exception.Message);
+    Console.WriteLine("--- Security findings ---");
+
+    if (possiblePortScans.Count == 0)
+    {
+        Console.WriteLine(
+            "[INFO] No obvious port-scanning pattern detected.");
+
+        return;
+    }
+
+    foreach (var scan in possiblePortScans)
+    {
+        Console.WriteLine(
+            $"[HIGH] Possible port scan: " +
+            $"{scan.SourceIp} contacted " +
+            $"{scan.Ports.Count} different ports on " +
+            $"{scan.DestinationIp}.");
+    }
 }
 
-static string GetField(string[] fields, int index)
+static List<PacketInfo> CreateDemoPackets()
+{
+    var packets = new List<PacketInfo>();
+
+    // Documentation-only addresses from TEST-NET ranges.
+    for (int port = 20; port < 35; port++)
+    {
+        packets.Add(
+            new PacketInfo(
+                "192.0.2.10",
+                "198.51.100.20",
+                "TCP",
+                "TCP",
+                port.ToString()));
+    }
+
+    for (int number = 0; number < 25; number++)
+    {
+        packets.Add(
+            new PacketInfo(
+                "203.0.113.5",
+                "198.51.100.25",
+                "TLS",
+                "TCP",
+                "443"));
+    }
+
+    for (int number = 0; number < 10; number++)
+    {
+        packets.Add(
+            new PacketInfo(
+                "192.0.2.50",
+                "198.51.100.53",
+                "DNS",
+                "UDP",
+                "53"));
+    }
+
+    return packets;
+}
+
+static string GetField(
+    string[] fields,
+    int index)
 {
     if (index >= fields.Length)
     {
@@ -168,6 +367,13 @@ static string GetField(string[] fields, int index)
     }
 
     return fields[index].Trim();
+}
+
+static string FirstValue(string value)
+{
+    return value
+        .Split(',', StringSplitOptions.RemoveEmptyEntries)
+        .FirstOrDefault()?.Trim() ?? string.Empty;
 }
 
 static void AddCount(
@@ -206,6 +412,14 @@ static void PrintTop(
                  .OrderByDescending(item => item.Value)
                  .Take(5))
     {
-        Console.WriteLine($"{item.Key,-25} {item.Value}");
+        Console.WriteLine(
+            $"{item.Key,-25} {item.Value}");
     }
 }
+
+internal sealed record PacketInfo(
+    string SourceIp,
+    string DestinationIp,
+    string Protocol,
+    string Transport,
+    string DestinationPort);
