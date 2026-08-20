@@ -4,6 +4,8 @@ A privacy-conscious command-line tool for analyzing PCAP and PCAPNG network capt
 
 > Current status: Working MVP
 
+![PCAP Story privacy-safe demo](docs/pcap-story-demo.png)
+
 ## Overview
 
 PCAP Story transforms raw packet-capture data into a simple, readable network summary. It is designed as a small cybersecurity and networking project with privacy and secure local processing in mind.
